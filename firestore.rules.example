@@ -1,0 +1,58 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+    function signedIn() { return request.auth != null; }
+    function isAdmin() {
+      return signedIn() &&
+        get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role == 'admin';
+    }
+    function isStaff() {
+      return signedIn() &&
+        get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role == 'staff';
+    }
+
+    match /users/{uid} {
+      allow read: if signedIn() && (request.auth.uid == uid || isAdmin());
+      allow create: if signedIn() && request.auth.uid == uid;
+      // Production rules should whitelist editable fields and prevent role self-escalation.
+      allow update: if signedIn() && (request.auth.uid == uid || isAdmin());
+    }
+
+    match /issues/{issueId} {
+      allow read: if signedIn();
+      allow create: if signedIn()
+        && request.resource.data.reporterUid == request.auth.uid
+        && request.resource.data.status == 'reported'
+        && request.resource.data.affectedCount == 1;
+      allow update: if signedIn() && (
+        isAdmin() ||
+        (resource.data.reporterUid == request.auth.uid
+          && request.resource.data.status == resource.data.status
+          && request.resource.data.assignedTo == resource.data.assignedTo
+          && request.resource.data.affectedCount == resource.data.affectedCount) ||
+        (isStaff() && resource.data.assignedTo == request.auth.uid)
+      );
+      allow delete: if isAdmin();
+
+      match /verificationVotes/{uid} {
+        allow read: if signedIn() && (request.auth.uid == uid || isAdmin());
+        allow create: if signedIn() && request.auth.uid == uid;
+        allow update, delete: if false;
+      }
+      match /events/{eventId} {
+        allow read: if signedIn();
+        allow create: if signedIn() && (isAdmin() || isStaff());
+        allow update, delete: if false;
+      }
+    }
+
+    match /notifications/{notificationId} {
+      allow read: if signedIn() && resource.data.uid == request.auth.uid;
+      allow create, update, delete: if isAdmin();
+    }
+    match /suggestions/{suggestionId} {
+      allow create: if signedIn() && request.resource.data.uid == request.auth.uid;
+      allow read, update, delete: if isAdmin();
+    }
+  }
+}

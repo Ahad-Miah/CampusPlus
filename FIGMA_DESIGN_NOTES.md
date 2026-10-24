@@ -1,0 +1,3 @@
+# Figma design reference notes
+
+The supplied 24-page PDF was reviewed as a montage. It shows a light mobile UI with indigo/purple primary accents, rounded cards, role-based screens, issue reporting/list/detail, staff assignments, admin management, notifications and analytics. This starter follows that visual direction and adds practical workflow screens where the project requirements need them. It is not a pixel-perfect reconstruction of all ~46 frames: the PDF pages show frames at a small scale, and each original Figma frame's exact dimensions, spacing, typography and assets are not available as structured design tokens. Use this as the functional starter and refine screens against the original Figma file in side-by-side review.

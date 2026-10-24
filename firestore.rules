@@ -1,0 +1,528 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+    function signedIn() {
+      return request.auth != null;
+    }
+
+    function userRole() {
+      return get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role;
+    }
+
+    function isAdmin() {
+      return signedIn() && userRole() == 'admin';
+    }
+
+    function isStaff() {
+      return signedIn() && userRole() == 'staff';
+    }
+
+    function isStudent() {
+      return signedIn() && userRole() == 'student';
+    }
+
+    function isIssueReporter(issueId) {
+      return signedIn()
+        && get(
+          /databases/$(database)/documents/issues/$(issueId)/private/reporter
+        ).data.uid == request.auth.uid;
+    }
+
+    function validRole(role) {
+      return role in ['student', 'staff', 'admin'];
+    }
+
+    function validPhotoUrl(url) {
+      return url is string
+        && url.size() <= 2048
+        && url.matches('https://res[.]cloudinary[.]com/.*');
+    }
+
+    match /users/{uid} {
+      allow get: if signedIn() && (request.auth.uid == uid || isAdmin());
+      allow list: if isAdmin();
+      allow create: if (
+        signedIn()
+        && request.auth.uid == uid
+        && request.resource.data.uid == uid
+        && request.resource.data.role == 'student'
+        && request.resource.data.pushEnabled == false
+        && request.resource.data.keys().hasOnly([
+          'uid', 'email', 'displayName', 'role', 'pushEnabled', 'createdAt'
+        ])
+      ) || (
+          isAdmin()
+          && request.auth.uid != uid
+          && request.resource.data.uid == uid
+          && request.resource.data.role == 'staff'
+          && request.resource.data.pushEnabled == false
+          && request.resource.data.createdBy == request.auth.uid
+          && request.resource.data.displayName is string
+          && request.resource.data.displayName.size() >= 2
+          && request.resource.data.email is string
+          && request.resource.data.department is string
+          && request.resource.data.keys().hasOnly([
+            'uid', 'email', 'displayName', 'role', 'pushEnabled',
+            'department', 'phone', 'createdAt', 'createdBy'
+          ])
+        );
+      allow update: if (
+        isAdmin()
+        && request.auth.uid != uid
+        && request.resource.data.diff(resource.data).affectedKeys()
+          .hasOnly(['role'])
+        && validRole(request.resource.data.role)
+      ) || (
+        signedIn()
+        && request.auth.uid == uid
+        && request.resource.data.diff(resource.data).affectedKeys()
+          .hasOnly(['displayName', 'photoUrl', 'pushEnabled'])
+      );
+      allow delete: if isAdmin() && request.auth.uid != uid;
+
+      match /fcmTokens/{tokenId} {
+        allow get, list: if signedIn() && (request.auth.uid == uid || isAdmin());
+        allow create, update: if signedIn()
+          && request.auth.uid == uid
+          && request.resource.data.token == tokenId
+          && request.resource.data.keys().hasOnly([
+            'token', 'platform', 'updatedAt'
+          ]);
+        allow delete: if signedIn() && request.auth.uid == uid;
+      }
+
+      match /following/{issueId} {
+        allow get, list: if signedIn() && request.auth.uid == uid;
+        allow create: if isStudent()
+          && request.auth.uid == uid
+          && request.resource.data.issueId == issueId
+          && request.resource.data.keys().hasOnly(['issueId', 'createdAt']);
+        allow update: if false;
+        allow delete: if signedIn()
+          && (
+            request.auth.uid == uid
+            || isAdmin()
+            || isIssueReporter(issueId)
+          );
+      }
+
+      match /reportedIssues/{issueId} {
+        allow get, list: if signedIn() && request.auth.uid == uid;
+        allow create: if (
+          (isStudent() && request.auth.uid == uid)
+          || isAdmin()
+        )
+          && request.resource.data.issueId == issueId
+          && request.resource.data.keys().hasOnly(['issueId', 'createdAt'])
+          && existsAfter(
+            /databases/$(database)/documents/issues/$(issueId)
+          )
+          && getAfter(
+            /databases/$(database)/documents/issues/$(issueId)/private/reporter
+          ).data.uid == uid;
+        allow update: if false;
+        allow delete: if signedIn()
+          && request.auth.uid == uid
+          && isIssueReporter(issueId);
+      }
+
+      match /notifications/{notificationId} {
+        allow get, list: if signedIn() && request.auth.uid == uid;
+        allow create: if isAdmin()
+          && request.resource.data.issueId is string
+          && request.resource.data.title is string
+          && request.resource.data.body is string
+          && request.resource.data.read == false
+          && request.resource.data.keys().hasOnly([
+            'issueId', 'title', 'body', 'read', 'createdAt'
+          ]);
+        allow update: if signedIn()
+          && request.auth.uid == uid
+          && request.resource.data.diff(resource.data).affectedKeys()
+            .hasOnly(['read'])
+          && request.resource.data.read == true;
+        allow delete: if signedIn() && request.auth.uid == uid;
+      }
+    }
+
+    match /issues/{issueId} {
+      allow get, list: if signedIn();
+      allow create: if isStudent()
+        && request.resource.data.status == 'reported'
+        && request.resource.data.affectedCount == 1
+        && request.resource.data.assignedTo == ''
+        && (
+          !request.resource.data.keys().hasAny(['resolutionPhotoUrl'])
+          || request.resource.data.resolutionPhotoUrl == ''
+          || validPhotoUrl(request.resource.data.resolutionPhotoUrl)
+        )
+        && request.resource.data.keys().hasOnly([
+          'title', 'description', 'category', 'location', 'reporter',
+          'building', 'floor', 'room', 'department', 'priorityOverride',
+          'resolutionSummary', 'resolutionPhotoUrl',
+          'assignedToName', 'verificationAssignedTo',
+          'verificationAssignedToName', 'verificationNote',
+          'isAnonymous', 'photoUrl', 'status', 'severity',
+          'affectedCount', 'assignedTo', 'history', 'verificationCount',
+          'stillExistsVotes',
+          'expectedBy', 'createdAt', 'updatedAt'
+        ])
+        && existsAfter(
+          /databases/$(database)/documents/issues/$(issueId)/private/reporter
+        )
+        && getAfter(
+          /databases/$(database)/documents/issues/$(issueId)/private/reporter
+        ).data.uid == request.auth.uid
+        && existsAfter(
+          /databases/$(database)/documents/issues/$(issueId)/affectedBy/$(request.auth.uid)
+        );
+
+      allow update: if (
+        isAdmin()
+        && (
+          (
+            request.resource.data.diff(resource.data).affectedKeys()
+              .hasOnly([
+                'status', 'assignedTo', 'assignedToName',
+                'verificationAssignedTo', 'verificationAssignedToName',
+                'verificationNote',
+                'history', 'updatedAt', 'category',
+                'location', 'severity', 'building', 'floor', 'room',
+                'department', 'priorityOverride', 'expectedBy',
+                'resolutionSummary', 'resolvedAt', 'title', 'description',
+                'photoUrl', 'resolutionPhotoUrl',
+                'deletionRequestStatus', 'deletionRequestedAt',
+                'deletionRequestedBy'
+              ])
+            && request.resource.data.status in [
+              'reported', 'verificationRequested', 'verified', 'assigned',
+              'inProgress', 'resolved', 'rejected'
+            ]
+            && (
+              !request.resource.data.diff(resource.data).affectedKeys()
+                .hasAny(['status'])
+              || (
+                request.resource.data.status == 'verificationRequested'
+                && resource.data.status
+                  in ['reported', 'rejected', 'verificationRequested']
+              )
+              || (
+                request.resource.data.status == 'assigned'
+                && resource.data.status in ['verified', 'assigned']
+              )
+            )
+            && (
+              request.resource.data.status != 'verificationRequested'
+              || (
+                resource.data.status in ['reported', 'rejected']
+                &&
+                request.resource.data.verificationAssignedTo is string
+                && request.resource.data.verificationAssignedTo != ''
+                && get(
+                  /databases/$(database)/documents/users/$(request.resource.data.verificationAssignedTo)
+                ).data.role == 'staff'
+              )
+            )
+            && (
+              request.resource.data.status != 'assigned'
+              || (
+                resource.data.status in ['verified', 'assigned']
+                && request.resource.data.assignedTo != ''
+              )
+            )
+            && (
+              request.resource.data.assignedTo == ''
+              || get(
+                /databases/$(database)/documents/users/$(request.resource.data.assignedTo)
+              ).data.role == 'staff'
+            )
+            && (
+              !request.resource.data.diff(resource.data).affectedKeys()
+                .hasAny([
+                  'deletionRequestStatus', 'deletionRequestedAt',
+                  'deletionRequestedBy'
+                ])
+              || (
+                resource.data.status == 'resolved'
+                && resource.data.get('deletionRequestStatus', '') != 'pending'
+                && request.resource.data.deletionRequestStatus == 'pending'
+                && request.resource.data.deletionRequestedBy
+                  == request.auth.uid
+                && request.resource.data.deletionRequestedAt is timestamp
+              )
+            )
+          )
+          || (
+            request.resource.data.diff(resource.data).affectedKeys()
+              .hasOnly(['reporterUid', 'updatedAt'])
+            && request.resource.data.diff(resource.data).affectedKeys()
+              .hasAny(['reporterUid'])
+            && !request.resource.data.keys().hasAny(['reporterUid'])
+          )
+        )
+      ) || (
+        isStaff()
+        && (
+          (
+            resource.data.status == 'verificationRequested'
+            && resource.data.verificationAssignedTo == request.auth.uid
+            && request.resource.data.status in ['verified', 'rejected']
+            && request.resource.data.diff(resource.data).affectedKeys()
+              .hasOnly([
+                'status', 'history', 'updatedAt',
+                'verificationAssignedTo', 'verificationAssignedToName',
+                'verificationNote'
+              ])
+            && request.resource.data.verificationAssignedTo == ''
+            && request.resource.data.verificationAssignedToName == ''
+            && request.resource.data.verificationNote is string
+            && request.resource.data.verificationNote.size() >= 5
+            && request.resource.data.verificationNote.size() <= 300
+          )
+          || (
+            resource.data.assignedTo == request.auth.uid
+            && request.resource.data.diff(resource.data).affectedKeys()
+              .hasOnly([
+                'status', 'history', 'updatedAt', 'resolutionSummary',
+                  'resolutionPhotoUrl', 'resolvedAt'
+              ])
+            && (
+              (resource.data.status == 'assigned'
+                && request.resource.data.status == 'inProgress')
+              || (resource.data.status == 'inProgress'
+                && request.resource.data.status == 'resolved'
+                && request.resource.data.resolutionSummary is string
+                && request.resource.data.resolutionSummary.size() >= 10
+                && request.resource.data.resolutionSummary.size() <= 500
+                && (
+                  !request.resource.data.keys().hasAny(['resolutionPhotoUrl'])
+                  || request.resource.data.resolutionPhotoUrl == ''
+                  || validPhotoUrl(request.resource.data.resolutionPhotoUrl)
+                ))
+            )
+          )
+        )
+      ) || (
+        isStudent()
+        && isIssueReporter(issueId)
+        && resource.data.status == 'reported'
+        && resource.data.assignedTo == ''
+        && request.resource.data.diff(resource.data).affectedKeys()
+          .hasOnly([
+            'title', 'description', 'category', 'location',
+            'building', 'floor', 'room', 'severity', 'photoUrl', 'updatedAt'
+          ])
+        && request.resource.data.title is string
+        && request.resource.data.title.size() >= 4
+        && request.resource.data.title.size() <= 70
+        && request.resource.data.description is string
+        && request.resource.data.description.size() >= 10
+        && request.resource.data.description.size() <= 500
+        && request.resource.data.category is string
+        && request.resource.data.location is string
+        && request.resource.data.severity in ['Low', 'Medium', 'High', 'Urgent']
+        && (
+          request.resource.data.photoUrl == null
+          || request.resource.data.photoUrl == ''
+          || validPhotoUrl(request.resource.data.photoUrl)
+        )
+      ) || (
+        isStudent()
+        && isIssueReporter(issueId)
+        && resource.data.deletionRequestStatus == 'pending'
+        && request.resource.data.diff(resource.data).affectedKeys()
+          .hasOnly(['deletionRequestStatus', 'updatedAt'])
+        && request.resource.data.deletionRequestStatus == 'declined'
+      ) || (
+        isStudent()
+        && resource.data.status != 'resolved'
+        && resource.data.status != 'rejected'
+        && request.resource.data.diff(resource.data).affectedKeys()
+          .hasOnly(['affectedCount', 'updatedAt'])
+        && request.resource.data.affectedCount == resource.data.affectedCount + 1
+        && existsAfter(
+          /databases/$(database)/documents/issues/$(issueId)/affectedBy/$(request.auth.uid)
+        )
+      ) || (
+        isStudent()
+        && resource.data.status == 'resolved'
+        && exists(
+          /databases/$(database)/documents/issues/$(issueId)/affectedBy/$(request.auth.uid)
+        )
+        && request.resource.data.diff(resource.data).affectedKeys()
+          .hasOnly([
+            'verificationCount', 'stillExistsVotes', 'status', 'history',
+            'updatedAt'
+          ])
+        && request.resource.data.verificationCount
+          == resource.data.get('verificationCount', 0) + 1
+        && request.resource.data.stillExistsVotes
+          == resource.data.get('stillExistsVotes', 0)
+            + (getAfter(
+            /databases/$(database)/documents/issues/$(issueId)/verificationVotes/$(request.auth.uid)
+          ).data.vote == 'Still exists' ? 1 : 0)
+        && (
+          request.resource.data.stillExistsVotes
+            > resource.data.affectedCount / 2
+            ? request.resource.data.status == 'inProgress'
+            : request.resource.data.status == 'resolved'
+        )
+        && existsAfter(
+          /databases/$(database)/documents/issues/$(issueId)/verificationVotes/$(request.auth.uid)
+        )
+      );
+      allow delete: if isStudent()
+        && isIssueReporter(issueId)
+        && (
+          (
+            resource.data.status in ['reported', 'rejected']
+            && resource.data.assignedTo == ''
+          )
+          || (
+            resource.data.status == 'resolved'
+            && resource.data.deletionRequestStatus == 'pending'
+          )
+        );
+
+      match /workUpdates/{updateId} {
+        allow get, list: if signedIn();
+        allow create: if isStaff()
+          && get(/databases/$(database)/documents/issues/$(issueId))
+            .data.assignedTo == request.auth.uid
+          && get(/databases/$(database)/documents/issues/$(issueId))
+            .data.status == 'inProgress'
+          && request.resource.data.authorUid == request.auth.uid
+          && request.resource.data.authorName
+            == get(/databases/$(database)/documents/users/$(request.auth.uid))
+              .data.displayName
+          && request.resource.data.note is string
+          && request.resource.data.note.size() >= 3
+          && request.resource.data.note.size() <= 500
+          && request.resource.data.completedSteps is list
+          && request.resource.data.completedSteps.size() <= 8
+          && request.resource.data.nextSteps is list
+          && request.resource.data.nextSteps.size() <= 8
+          && (
+            !request.resource.data.keys().hasAny(['photoUrl'])
+            || validPhotoUrl(request.resource.data.photoUrl)
+          )
+          && request.resource.data.keys().hasOnly([
+            'authorUid', 'authorName', 'note', 'completedSteps',
+            'nextSteps', 'photoUrl', 'createdAt'
+          ]);
+        allow update: if false;
+        allow delete: if isAdmin() || isIssueReporter(issueId);
+      }
+
+      match /private/{recordId} {
+        allow get: if isAdmin()
+          || (signedIn() && resource.data.uid == request.auth.uid);
+        allow list: if false;
+        allow create: if recordId == 'reporter'
+          && request.resource.data.keys().hasOnly(['uid', 'createdAt'])
+          && (isAdmin() || (
+            isStudent()
+            && request.resource.data.uid == request.auth.uid
+          ));
+        allow update: if recordId == 'reporter'
+          && isAdmin()
+          && request.resource.data.uid == resource.data.uid
+          && request.resource.data.keys().hasOnly(['uid', 'createdAt']);
+        allow delete: if isAdmin() || isIssueReporter(issueId);
+      }
+
+      match /affectedBy/{uid} {
+        allow get: if signedIn() && request.auth.uid == uid;
+        allow list: if isAdmin() || isIssueReporter(issueId);
+        allow create: if isStudent()
+          && request.auth.uid == uid
+            && getAfter(/databases/$(database)/documents/issues/$(issueId)).data.status
+            != 'resolved'
+            && getAfter(/databases/$(database)/documents/issues/$(issueId)).data.status
+            != 'rejected'
+          && request.resource.data.keys().hasOnly(['createdAt']);
+        allow update: if false;
+        allow delete: if isAdmin() || isIssueReporter(issueId);
+      }
+
+      match /followers/{uid} {
+        allow get: if signedIn() && request.auth.uid == uid;
+        allow list: if isAdmin() || isIssueReporter(issueId);
+        allow create: if isStudent()
+          && request.auth.uid == uid
+          && request.resource.data.keys().hasOnly(['createdAt']);
+        allow update: if signedIn() && request.auth.uid == uid;
+        allow delete: if signedIn()
+          && (
+            request.auth.uid == uid
+            || isAdmin()
+            || isIssueReporter(issueId)
+          );
+      }
+
+      match /verificationVotes/{uid} {
+        allow get: if signedIn() && (request.auth.uid == uid || isAdmin());
+        allow list: if isAdmin() || isIssueReporter(issueId);
+        allow create: if isStudent()
+          && request.auth.uid == uid
+          && get(/databases/$(database)/documents/issues/$(issueId)).data.status
+            == 'resolved'
+          && exists(
+            /databases/$(database)/documents/issues/$(issueId)/affectedBy/$(uid)
+          )
+          && !exists(
+            /databases/$(database)/documents/issues/$(issueId)/verificationVotes/$(uid)
+          )
+          && request.resource.data.vote in ['Yes, fixed', 'Still exists', 'Not sure']
+          && request.resource.data.keys().hasOnly(['vote', 'createdAt']);
+        allow update: if false;
+        allow delete: if isAdmin() || isIssueReporter(issueId);
+      }
+
+      match /events/{eventId} {
+        allow get, list: if signedIn();
+        allow create: if isAdmin() || isStaff();
+        allow update: if false;
+        allow delete: if isAdmin() || isIssueReporter(issueId);
+      }
+    }
+
+    match /supportMessages/{requestId} {
+      allow create: if signedIn()
+        && request.resource.data.uid == request.auth.uid
+        && request.resource.data.email == request.auth.token.email
+        && request.resource.data.status == 'open'
+        && request.resource.data.keys().hasOnly([
+          'uid', 'email', 'subject', 'message', 'status', 'createdAt'
+        ]);
+      allow get, list: if isAdmin()
+        || (signedIn() && resource.data.uid == request.auth.uid);
+      allow update: if isAdmin()
+        && request.resource.data.diff(resource.data).affectedKeys()
+          .hasOnly(['status', 'updatedAt'])
+        && request.resource.data.status in ['open', 'resolved'];
+      allow delete: if isAdmin();
+    }
+
+    match /suggestions/{suggestionId} {
+      allow create: if isStudent()
+        && request.resource.data.uid == request.auth.uid
+        && request.resource.data.email == request.auth.token.email
+        && request.resource.data.status == 'open'
+        && request.resource.data.message is string
+        && request.resource.data.message.size() >= 10
+        && request.resource.data.message.size() <= 1000
+        && request.resource.data.keys().hasOnly([
+          'uid', 'email', 'message', 'status', 'createdAt'
+        ]);
+      allow get, list: if isAdmin()
+        || (signedIn() && resource.data.uid == request.auth.uid);
+      allow update: if isAdmin()
+        && request.resource.data.diff(resource.data).affectedKeys()
+          .hasOnly(['status', 'updatedAt'])
+        && request.resource.data.status
+          in ['reviewed', 'implemented', 'declined'];
+      allow delete: if isAdmin();
+    }
+  }
+}

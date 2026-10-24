@@ -1,0 +1,29 @@
+{
+  "project_info": {
+    "project_number": "1002162949752",
+    "project_id": "campusplus-210d8",
+    "storage_bucket": "campusplus-210d8.firebasestorage.app"
+  },
+  "client": [
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:1002162949752:android:3fa3fc9e4d33a2c500278d",
+        "android_client_info": {
+          "package_name": "com.example.app"
+        }
+      },
+      "oauth_client": [],
+      "api_key": [
+        {
+          "current_key": "AIzaSyDHpZALwPrfgBkFwZgxcDVh4rykeRU9rSc"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": []
+        }
+      }
+    }
+  ],
+  "configuration_version": "1"
+}
