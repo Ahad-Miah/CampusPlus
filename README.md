@@ -28,6 +28,7 @@ Firebase Android settings are configured for project `campusplus-210d8` and pack
 - Student My Issues page to track, edit photos/details on unassigned reports, or delete owned reports
 - Admin Manage All Issues page with search/status filters and reporter-approved deletion of resolved issues
 - Live unread notification counts and deletion-approval alerts that open approve/decline actions without entering the issue workflow
+- Home issue cards with photo-led priority/status badges, location and details action; five recent issues are shown on the dashboard
 - Report form with category, building/floor/room, severity and anonymous toggle
 - Optional issue/profile photo uploads to Cloudinary; secure image URLs are saved in Firestore
 - Similar open issue check, one-time affected votes, and persistent issue following
@@ -35,7 +36,7 @@ Firebase Android settings are configured for project `campusplus-210d8` and pack
 - Staff-confirmed inspections before Admin repair assignment; Staff can document work, attach progress/completion photos, and explicitly submit a resolution summary
 - Android launcher icon uses the supplied CampusPlus graduation illustration
 - Only affected students can verify resolutions; reopening requires a strict majority of affected students
-- Issue notifications, push alerts, and notification history (after Cloud Function deployment); duplicate issue events are suppressed
+- Issue creation, assignment, inspection, and staff progress notifications, push alerts, and notification history (after Cloud Function deployment); duplicate issue events are suppressed
 - Profile editing, account settings, support requests, student suggestions and Admin review tools
 - Analytics by category/building, recurrence, resolution time and expected-date SLA
 - Anonymous reporter IDs stored in restricted documents, with Admin migration for legacy reports

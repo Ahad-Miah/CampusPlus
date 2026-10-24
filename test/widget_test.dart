@@ -250,6 +250,7 @@ void main() {
     );
 
     expect(find.text('In Progress'), findsOneWidget);
+    expect(find.text('Details'), findsOneWidget);
     expect(
       find.text('Open to post repair steps or submit completion'),
       findsOneWidget,
@@ -328,7 +329,11 @@ void main() {
       ),
     );
     await tester.pumpAndSettle();
-    await tester.ensureVisible(find.text('Yes, fixed'));
+    await tester.scrollUntilVisible(
+      find.text('Yes, fixed'),
+      240,
+      scrollable: find.byType(Scrollable).first,
+    );
     await tester.tap(find.text('Yes, fixed'));
     await tester.pumpAndSettle();
 
@@ -665,6 +670,50 @@ void main() {
     await tester.tap(find.text('Approve & delete').first);
     await tester.pumpAndSettle();
     await tester.tap(find.text('Approve & delete').last);
+    await tester.pumpAndSettle();
+
+    expect(deletedIssueId, issue.id);
+    expect(tester.takeException(), isNull);
+  });
+
+  testWidgets('Student can delete a verified issue before repair assignment', (
+    WidgetTester tester,
+  ) async {
+    final issue = CampusIssue(
+      id: 'CP-VERIFIED-DELETE',
+      title: 'Verified broken projector',
+      description: 'The projector was inspected and is not working.',
+      category: 'Electrical',
+      location: 'Lecture Hall · 3 · Room 301',
+      reporter: 'Student',
+      status: IssueStatus.verified,
+    );
+    String? deletedIssueId;
+    await tester.pumpWidget(
+      MaterialApp(
+        home: MyIssuesPage(
+          uid: 'student-1',
+          watchIssues: () => Stream.value([issue]),
+          watchMyIssueIds: (_) => Stream.value([issue.id]),
+          updateIssue: (_) async {},
+          deleteIssue: (issueId) async => deletedIssueId = issueId,
+          dismissDeletionRequest: (_) async {},
+          uploadPhoto: ({
+            required Uint8List bytes,
+            required String fileName,
+            required String contentType,
+          }) async =>
+              'https://res.cloudinary.com/test/image/upload/$fileName',
+          onOpenIssue: (_) {},
+          onMessage: (_) {},
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    await tester.tap(find.text('Delete report'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Delete issue'));
     await tester.pumpAndSettle();
 
     expect(deletedIssueId, issue.id);

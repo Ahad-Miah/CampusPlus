@@ -1671,7 +1671,7 @@ class _HomeShellState extends State<HomeShell> {
           subtitle:
               'Inspection requests and repair assignments from Admin will appear in Tasks.',
         ),
-      ...(staff ? myStaffTasks : all).take(3).map((i) => IssueTile(
+      ...(staff ? myStaffTasks : all).take(5).map((i) => IssueTile(
             issue: i,
             onTap: () => _openIssue(i),
             actionHint: staff
@@ -2575,6 +2575,8 @@ class _MyIssueCardState extends State<_MyIssueCard> {
 
   bool get _canDelete =>
       _canEdit ||
+      (widget.issue.status == IssueStatus.verified &&
+          widget.issue.assignedTo.isEmpty) ||
       (widget.issue.status == IssueStatus.rejected &&
           widget.issue.assignedTo.isEmpty) ||
       (widget.issue.status == IssueStatus.resolved &&
@@ -5159,143 +5161,241 @@ class IssueTile extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) => Card(
-        margin: const EdgeInsets.only(bottom: 10),
+        margin: const EdgeInsets.only(bottom: 14),
+        clipBehavior: Clip.antiAlias,
         child: InkWell(
-            borderRadius: BorderRadius.circular(20),
-            onTap: onTap,
-            child: Padding(
-                padding: const EdgeInsets.all(14),
-                child: Row(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      Container(
-                        width: 66,
-                        height: 72,
-                        clipBehavior: Clip.antiAlias,
-                        decoration: BoxDecoration(
-                          color: const Color(0xFFEDEBFF),
-                          borderRadius: BorderRadius.circular(14),
+          onTap: onTap,
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              SizedBox(
+                height: 158,
+                child: Stack(
+                  fit: StackFit.expand,
+                  children: [
+                    if (issue.imageUrl != null &&
+                        issue.imageUrl!.trim().isNotEmpty)
+                      Image.network(
+                        issue.imageUrl!,
+                        fit: BoxFit.cover,
+                        errorBuilder: (context, error, stackTrace) =>
+                            _issueImagePlaceholder(),
+                      )
+                    else
+                      _issueImagePlaceholder(),
+                    const DecoratedBox(
+                      decoration: BoxDecoration(
+                        gradient: LinearGradient(
+                          begin: Alignment.topCenter,
+                          end: Alignment.bottomCenter,
+                          colors: [
+                            Color(0x33000000),
+                            Colors.transparent,
+                            Color(0xCC000000),
+                          ],
+                          stops: [0, 0.38, 1],
                         ),
-                        child: issue.imageUrl == null
-                            ? Icon(_issueCategoryIcon(issue.category),
-                                color: brand, size: 30)
-                            : Image.network(
-                                issue.imageUrl!,
-                                fit: BoxFit.cover,
-                                errorBuilder: (context, error, stackTrace) =>
-                                    Icon(_issueCategoryIcon(issue.category),
-                                        color: brand, size: 30),
-                              ),
                       ),
-                      const SizedBox(width: 12),
-                      Expanded(
-                          child: Column(
-                              crossAxisAlignment: CrossAxisAlignment.start,
-                              children: [
-                            Wrap(
-                              spacing: 8,
-                              runSpacing: 6,
-                              crossAxisAlignment: WrapCrossAlignment.center,
-                              children: [
-                                ConstrainedBox(
-                                  constraints:
-                                      const BoxConstraints(maxWidth: 240),
-                                  child: Text(
-                                    issue.title,
-                                    maxLines: 2,
-                                    overflow: TextOverflow.ellipsis,
-                                    style: const TextStyle(
-                                      fontWeight: FontWeight.w800,
-                                      fontSize: 15,
-                                    ),
-                                  ),
-                                ),
-                                _StatusPill(issue.status),
-                              ],
+                    ),
+                    Positioned(
+                      top: 12,
+                      left: 12,
+                      child: _IssueCardTag(
+                        label: issue.priority,
+                        icon: Icons.circle,
+                        iconColor: issue.priority == 'Urgent' ||
+                                issue.priority == 'High'
+                            ? Colors.redAccent
+                            : brand,
+                      ),
+                    ),
+                    Positioned(
+                      top: 12,
+                      right: 12,
+                      child: _IssueCardTag(
+                        label: issue.status.label,
+                        foreground: issue.status == IssueStatus.resolved
+                            ? const Color(0xFF138A68)
+                            : brand,
+                      ),
+                    ),
+                    Positioned(
+                      left: 14,
+                      right: 14,
+                      bottom: 12,
+                      child: Text(
+                        issue.title,
+                        maxLines: 2,
+                        overflow: TextOverflow.ellipsis,
+                        style: const TextStyle(
+                          color: Colors.white,
+                          fontSize: 17,
+                          fontWeight: FontWeight.w800,
+                          shadows: [
+                            Shadow(
+                              color: Colors.black54,
+                              blurRadius: 8,
                             ),
-                            const SizedBox(height: 5),
-                            Text(issue.location,
-                                maxLines: 2,
-                                overflow: TextOverflow.ellipsis,
-                                style: const TextStyle(
-                                    color: muted, fontSize: 12)),
-                            if (issue.assignedTo.isNotEmpty) ...[
-                              const SizedBox(height: 4),
-                              Row(
-                                children: [
-                                  const Icon(
-                                    Icons.engineering_outlined,
-                                    size: 14,
-                                    color: brand,
-                                  ),
-                                  const SizedBox(width: 4),
-                                  Expanded(
-                                    child: Text(
-                                      'Assigned to ${issue.assigneeDisplayName}',
-                                      maxLines: 1,
-                                      overflow: TextOverflow.ellipsis,
-                                      style: const TextStyle(
-                                        color: brand,
-                                        fontSize: 11,
-                                        fontWeight: FontWeight.w700,
-                                      ),
-                                    ),
-                                  ),
-                                ],
-                              ),
-                            ],
-                            if (actionHint != null) ...[
-                              const SizedBox(height: 6),
-                              Text(
-                                actionHint!,
-                                maxLines: 2,
-                                overflow: TextOverflow.ellipsis,
-                                style: const TextStyle(
-                                  color: brand,
-                                  fontSize: 11,
-                                  fontWeight: FontWeight.w600,
-                                ),
-                              ),
-                            ],
-                            const SizedBox(height: 8),
-                            Wrap(
-                              spacing: 12,
-                              runSpacing: 4,
-                              crossAxisAlignment: WrapCrossAlignment.center,
-                              children: [
-                                Row(
-                                  mainAxisSize: MainAxisSize.min,
-                                  children: [
-                                    const Icon(
-                                      Icons.people_outline,
-                                      size: 15,
-                                      color: muted,
-                                    ),
-                                    const SizedBox(width: 4),
-                                    Text(
-                                      '${issue.affectedCount} affected',
-                                      style: const TextStyle(
-                                        color: muted,
-                                        fontSize: 12,
-                                      ),
-                                    ),
-                                  ],
-                                ),
-                                Text(
-                                  '${issue.priority} priority',
-                                  style: TextStyle(
-                                    color: issue.priority == 'Urgent' ||
-                                            issue.priority == 'High'
-                                        ? Colors.redAccent
-                                        : muted,
-                                    fontWeight: FontWeight.w700,
-                                    fontSize: 12,
-                                  ),
-                                ),
-                              ],
+                          ],
+                        ),
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+              Padding(
+                padding: const EdgeInsets.fromLTRB(14, 11, 10, 11),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Row(
+                      children: [
+                        const Icon(
+                          Icons.location_on_outlined,
+                          size: 15,
+                          color: muted,
+                        ),
+                        const SizedBox(width: 4),
+                        Expanded(
+                          child: Text(
+                            issue.location,
+                            maxLines: 1,
+                            overflow: TextOverflow.ellipsis,
+                            style: const TextStyle(
+                              color: muted,
+                              fontSize: 12,
                             ),
-                          ])),
-                    ]))),
+                          ),
+                        ),
+                      ],
+                    ),
+                    if (issue.assignedTo.isNotEmpty) ...[
+                      const SizedBox(height: 5),
+                      Text(
+                        'Assigned to ${issue.assigneeDisplayName}',
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                        style: const TextStyle(
+                          color: brand,
+                          fontSize: 11,
+                          fontWeight: FontWeight.w700,
+                        ),
+                      ),
+                    ],
+                    if (actionHint != null) ...[
+                      const SizedBox(height: 4),
+                      Text(
+                        actionHint!,
+                        maxLines: 2,
+                        overflow: TextOverflow.ellipsis,
+                        style: const TextStyle(
+                          color: brand,
+                          fontSize: 11,
+                          fontWeight: FontWeight.w600,
+                        ),
+                      ),
+                    ],
+                    const SizedBox(height: 7),
+                    Row(
+                      children: [
+                        const Icon(
+                          Icons.schedule_outlined,
+                          size: 14,
+                          color: muted,
+                        ),
+                        const SizedBox(width: 4),
+                        Text(
+                          issue.createdAt == null
+                              ? 'Just now'
+                              : _formatTimeAgo(issue.createdAt!),
+                          style: const TextStyle(color: muted, fontSize: 11),
+                        ),
+                        const SizedBox(width: 12),
+                        const Icon(
+                          Icons.people_outline,
+                          size: 14,
+                          color: muted,
+                        ),
+                        const SizedBox(width: 4),
+                        Text(
+                          '${issue.affectedCount}',
+                          style: const TextStyle(color: brand, fontSize: 11),
+                        ),
+                        const Spacer(),
+                        FilledButton(
+                          onPressed: onTap,
+                          style: FilledButton.styleFrom(
+                            minimumSize: const Size(0, 34),
+                            padding: const EdgeInsets.symmetric(horizontal: 13),
+                            visualDensity: VisualDensity.compact,
+                          ),
+                          child: const Row(
+                            mainAxisSize: MainAxisSize.min,
+                            children: [
+                              Text('Details'),
+                              SizedBox(width: 4),
+                              Icon(Icons.chevron_right, size: 17),
+                            ],
+                          ),
+                        ),
+                      ],
+                    ),
+                  ],
+                ),
+              ),
+            ],
+          ),
+        ),
+      );
+
+  Widget _issueImagePlaceholder() => Container(
+        color: const Color(0xFFEDEBFF),
+        alignment: Alignment.center,
+        child: Icon(
+          _issueCategoryIcon(issue.category),
+          color: brand,
+          size: 46,
+        ),
+      );
+}
+
+class _IssueCardTag extends StatelessWidget {
+  const _IssueCardTag({
+    required this.label,
+    this.icon,
+    this.iconColor,
+    this.foreground = ink,
+  });
+
+  final String label;
+  final IconData? icon;
+  final Color? iconColor;
+  final Color foreground;
+
+  @override
+  Widget build(BuildContext context) => Container(
+        padding: const EdgeInsets.symmetric(horizontal: 9, vertical: 5),
+        decoration: BoxDecoration(
+          color: Colors.white.withValues(alpha: 0.96),
+          borderRadius: BorderRadius.circular(18),
+        ),
+        child: Row(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            if (icon != null) ...[
+              Icon(icon, size: 9, color: iconColor ?? foreground),
+              const SizedBox(width: 4),
+            ],
+            Text(
+              label,
+              style: TextStyle(
+                color: foreground,
+                fontSize: 10,
+                fontWeight: FontWeight.w800,
+              ),
+            ),
+          ],
+        ),
       );
 }
 

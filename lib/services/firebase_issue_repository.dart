@@ -565,7 +565,9 @@ class FirebaseIssueRepository {
       throw StateError('Only student accounts can delete issues.');
     }
     final status = issue['status'];
-    final canDelete = ((status == 'reported' || status == 'rejected') &&
+    final canDelete = ((status == 'reported' ||
+                status == 'verified' ||
+                status == 'rejected') &&
             issue['assignedTo'] == '') ||
         (status == 'resolved' && issue['deletionRequestStatus'] == 'pending');
     if (!canDelete) {
@@ -607,7 +609,6 @@ class FirebaseIssueRepository {
             .doc(issueId),
       );
     }
-    deleteRefs.add(issueRef.collection('private').doc('reporter'));
     deleteRefs.add(
       _firestore
           .collection('users')
@@ -615,7 +616,6 @@ class FirebaseIssueRepository {
           .collection('reportedIssues')
           .doc(issueId),
     );
-    deleteRefs.add(issueRef);
     for (var offset = 0; offset < deleteRefs.length; offset += 450) {
       final batch = _firestore.batch();
       final end =
@@ -625,6 +625,11 @@ class FirebaseIssueRepository {
       }
       await batch.commit();
     }
+
+    final finalBatch = _firestore.batch()
+      ..delete(issueRef.collection('private').doc('reporter'))
+      ..delete(issueRef);
+    await finalBatch.commit();
   }
 
   Future<void> updateProfile({

@@ -121,7 +121,9 @@ service cloud.firestore {
             /databases/$(database)/documents/issues/$(issueId)/private/reporter
           ).data.uid == uid;
         allow update: if false;
-        allow delete: if signedIn() && isIssueReporter(issueId);
+        allow delete: if signedIn()
+          && request.auth.uid == uid
+          && isIssueReporter(issueId);
       }
 
       match /notifications/{notificationId} {
@@ -230,7 +232,7 @@ service cloud.firestore {
             && (
               request.resource.data.status != 'verificationRequested'
               || (
-                resource.data.status in ['reported', 'rejected']
+                resource.data.status in ['reported', 'verified', 'rejected']
                 &&
                 request.resource.data.verificationAssignedTo is string
                 && request.resource.data.verificationAssignedTo != ''

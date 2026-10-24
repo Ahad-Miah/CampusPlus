@@ -78,7 +78,7 @@ Issue and profile images accept JPG, PNG, or WebP files up to 5 MB. Cloudinary's
 
 ## F. Push notifications and Functions
 
-Android notification permission is requested when push notifications are enabled in Profile → Settings. Issue updates are also saved in the in-app Updates screen. The Cloud Function sends FCM notifications to opted-in devices and writes notification history; when deployed, it also sends the resolved-issue deletion approval request to the reporting student's opted-in devices.
+Android notification permission is requested when push notifications are enabled in Profile → Settings. The unread badge counts every unread notification document, including new reports, assignments, inspection requests, status changes, and work-progress updates. Issue updates are saved in the in-app Updates screen. The Cloud Functions send FCM notifications to opted-in devices and write notification history; deployment is required for these event notifications to be created.
 
 Install the Functions dependencies and deploy (requires eligible Firebase billing):
 ```bash

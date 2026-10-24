@@ -2,7 +2,10 @@ const { initializeApp } = require("firebase-admin/app");
 const { FieldValue, getFirestore } = require("firebase-admin/firestore");
 const { getMessaging } = require("firebase-admin/messaging");
 const { logger } = require("firebase-functions");
-const { onDocumentWritten } = require("firebase-functions/v2/firestore");
+const {
+  onDocumentCreated,
+  onDocumentWritten,
+} = require("firebase-functions/v2/firestore");
 
 initializeApp();
 
@@ -167,6 +170,99 @@ exports.notifyIssueUpdates = onDocumentWritten(
     });
     await Promise.all(staleTokens);
     logger.info("Issue notifications dispatched", {
+      issueId,
+      recipientCount: recipients.size,
+      tokenCount: tokens.length,
+      deliveredCount: response.successCount,
+    });
+  },
+);
+
+exports.notifyWorkProgress = onDocumentCreated(
+  {
+    document: "issues/{issueId}/workUpdates/{updateId}",
+    region: "us-central1",
+  },
+  async (event) => {
+    const update = event.data?.data();
+    if (!update) return;
+
+    const issueId = event.params.issueId;
+    const issueRef = db.collection("issues").doc(issueId);
+    const dispatchRef = issueRef.collection("notificationEvents")
+      .doc(`work-${event.id}`);
+    const claimed = await db.runTransaction(async (transaction) => {
+      const dispatch = await transaction.get(dispatchRef);
+      if (dispatch.exists) return false;
+      transaction.create(dispatchRef, {
+        createdAt: FieldValue.serverTimestamp(),
+      });
+      return true;
+    });
+    if (!claimed) return;
+
+    const [issueSnapshot, followers, affectedUsers] = await Promise.all([
+      issueRef.get(),
+      issueRef.collection("followers").get(),
+      issueRef.collection("affectedBy").get(),
+    ]);
+    if (!issueSnapshot.exists) return;
+    const issue = issueSnapshot.data();
+    const reporter = await issueRef.collection("private")
+      .doc("reporter")
+      .get();
+    const recipients = new Set([
+      reporter.data()?.uid,
+      issue.assignedTo,
+      issue.verificationAssignedTo,
+      ...followers.docs.map((doc) => doc.id),
+      ...affectedUsers.docs.map((doc) => doc.id),
+    ].filter((uid) => typeof uid === "string" &&
+      uid.length > 0 &&
+      uid !== update.authorUid));
+    if (recipients.size === 0) return;
+
+    const title = "Repair progress updated";
+    const body = `${update.authorName || "Maintenance staff"}: ${update.note}`;
+    const batch = db.batch();
+    const tokenRefs = [];
+    for (const uid of recipients) {
+      const profileRef = db.collection("users").doc(uid);
+      batch.set(profileRef.collection("notifications").doc(event.id), {
+        title,
+        body,
+        issueId,
+        notificationType: "issue_update",
+        read: false,
+        createdAt: FieldValue.serverTimestamp(),
+      });
+      const profile = await profileRef.get();
+      if (profile.exists && profile.data().pushEnabled === true) {
+        const tokens = await profileRef.collection("fcmTokens").get();
+        tokenRefs.push(...tokens.docs);
+      }
+    }
+    await batch.commit();
+
+    const tokens = [...new Set(tokenRefs
+      .map((doc) => doc.data().token)
+      .filter((token) => typeof token === "string" && token.length > 0))];
+    if (tokens.length === 0) return;
+
+    const response = await getMessaging().sendEachForMulticast({
+      tokens: tokens.slice(0, 500),
+      notification: { title, body },
+      data: { issueId, notificationType: "issue_update", title, body },
+      android: {
+        priority: "high",
+        collapseKey: issueId,
+        notification: {
+          channelId: "campusplus_updates",
+          tag: issueId,
+        },
+      },
+    });
+    logger.info("Repair progress notifications dispatched", {
       issueId,
       recipientCount: recipients.size,
       tokenCount: tokens.length,
