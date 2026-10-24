@@ -56,6 +56,14 @@ class FirebaseIssueRepository {
               .map((doc) => {'id': doc.id, ...doc.data()})
               .toList(growable: false));
 
+  Stream<int> watchUnreadNotificationCount(String uid) => _firestore
+      .collection('users')
+      .doc(uid)
+      .collection('notifications')
+      .where('read', isEqualTo: false)
+      .snapshots()
+      .map((snapshot) => snapshot.size);
+
   Stream<List<Map<String, dynamic>>> watchUsers() => _firestore
       .collection('users')
       .orderBy('createdAt', descending: true)
@@ -514,6 +522,7 @@ class FirebaseIssueRepository {
           .doc(),
       {
         'issueId': issueId,
+        'type': 'issue_deletion_request',
         'title': 'Issue deletion approval requested',
         'body':
             'Admin requested permission to delete your resolved issue. Review it in My Issues.',
@@ -540,36 +549,64 @@ class FirebaseIssueRepository {
   Future<void> deleteIssue(String issueId) async {
     final user = _requireUser();
     final issueRef = _issues.doc(issueId);
+    final issueSnapshot = await issueRef.get();
+    if (!issueSnapshot.exists) {
+      throw StateError('This issue has already been deleted.');
+    }
+    final issue = issueSnapshot.data()!;
+    final reporter = await issueRef.collection('private').doc('reporter').get();
+    final reporterUid = reporter.data()?['uid'] as String?;
+    if (reporterUid != user.uid) {
+      throw StateError(
+          'Only the student who reported this issue can delete it.');
+    }
+    final profile = await _firestore.collection('users').doc(user.uid).get();
+    if (profile.data()?['role'] != 'student') {
+      throw StateError('Only student accounts can delete issues.');
+    }
+    final status = issue['status'];
+    final canDelete = ((status == 'reported' || status == 'rejected') &&
+            issue['assignedTo'] == '') ||
+        (status == 'resolved' && issue['deletionRequestStatus'] == 'pending');
+    if (!canDelete) {
+      throw StateError(
+        'An issue can only be deleted before assignment or after Admin '
+        'requests approval for a resolved issue.',
+      );
+    }
     const childCollections = [
       'workUpdates',
       'affectedBy',
       'followers',
       'verificationVotes',
       'events',
+      'notificationEvents',
     ];
     final deleteRefs = <DocumentReference<Map<String, dynamic>>>[];
+    final followerUids = <String>{};
     for (final collectionName in childCollections) {
       final children = await issueRef.collection(collectionName).get();
       for (final child in children.docs) {
         deleteRefs.add(child.reference);
         if (collectionName == 'followers') {
-          deleteRefs.add(
-            _firestore
-                .collection('users')
-                .doc(child.id)
-                .collection('following')
-                .doc(issueId),
-          );
+          followerUids.add(child.id);
         }
       }
     }
     final notifications = await _firestore
-        .collection('users')
-        .doc(user.uid)
-        .collection('notifications')
+        .collectionGroup('notifications')
         .where('issueId', isEqualTo: issueId)
         .get();
     deleteRefs.addAll(notifications.docs.map((document) => document.reference));
+    for (final uid in followerUids) {
+      deleteRefs.add(
+        _firestore
+            .collection('users')
+            .doc(uid)
+            .collection('following')
+            .doc(issueId),
+      );
+    }
     deleteRefs.add(issueRef.collection('private').doc('reporter'));
     deleteRefs.add(
       _firestore
@@ -578,6 +615,7 @@ class FirebaseIssueRepository {
           .collection('reportedIssues')
           .doc(issueId),
     );
+    deleteRefs.add(issueRef);
     for (var offset = 0; offset < deleteRefs.length; offset += 450) {
       final batch = _firestore.batch();
       final end =
@@ -587,7 +625,6 @@ class FirebaseIssueRepository {
       }
       await batch.commit();
     }
-    await issueRef.delete();
   }
 
   Future<void> updateProfile({

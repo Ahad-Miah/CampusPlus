@@ -1202,6 +1202,7 @@ class _HomeShellState extends State<HomeShell> {
   String query = '';
   String filter = 'All';
   final repository = FirebaseIssueRepository();
+  late final Stream<int> _unreadNotificationCount;
   StreamSubscription<List<CampusIssue>>? _issuesSubscription;
   List<CampusIssue> issues = [];
   bool _loadingIssues = true;
@@ -1218,6 +1219,10 @@ class _HomeShellState extends State<HomeShell> {
   @override
   void initState() {
     super.initState();
+    final uid = FirebaseAuth.instance.currentUser?.uid;
+    _unreadNotificationCount = uid == null
+        ? Stream<int>.value(0)
+        : repository.watchUnreadNotificationCount(uid);
     PushNotificationService.instance.onOpen = _handlePushOpen;
     if (widget.role == 'Authority / Admin') {
       unawaited(_migrateLegacyReporterUids());
@@ -1265,8 +1270,15 @@ class _HomeShellState extends State<HomeShell> {
     super.dispose();
   }
 
-  Future<void> _handlePushOpen(String? issueId) async {
+  Future<void> _handlePushOpen(
+    String? issueId,
+    String? notificationType,
+  ) async {
     if (!mounted) return;
+    if (notificationType == 'issue_deletion_request') {
+      setState(() => index = 3);
+      return;
+    }
     final issue = all.where((item) => item.id == issueId).firstOrNull;
     if (issue != null) {
       _openIssue(issue);
@@ -1490,8 +1502,12 @@ class _HomeShellState extends State<HomeShell> {
           ]),
           actions: [
             IconButton(
-                onPressed: () => setState(() => index = 3),
-                icon: const Icon(Icons.notifications_none_rounded)),
+              onPressed: () => setState(() => index = 3),
+              icon: UnreadNotificationIcon(
+                count: _unreadNotificationCount,
+                icon: Icons.notifications_none_rounded,
+              ),
+            ),
             const SizedBox(width: 8),
           ],
         ),
@@ -1504,7 +1520,13 @@ class _HomeShellState extends State<HomeShell> {
               destinations: List.generate(
                   labels.length,
                   (i) => NavigationRailDestination(
-                      icon: Icon(icons[i]), label: Text(labels[i]))),
+                      icon: i == 3
+                          ? UnreadNotificationIcon(
+                              count: _unreadNotificationCount,
+                              icon: icons[i],
+                            )
+                          : Icon(icons[i]),
+                      label: Text(labels[i]))),
             ),
           Expanded(
               child: Center(
@@ -1523,7 +1545,13 @@ class _HomeShellState extends State<HomeShell> {
                 destinations: List.generate(
                     labels.length,
                     (i) => NavigationDestination(
-                        icon: Icon(icons[i]), label: labels[i])),
+                        icon: i == 3
+                            ? UnreadNotificationIcon(
+                                count: _unreadNotificationCount,
+                                icon: icons[i],
+                              )
+                            : Icon(icons[i]),
+                        label: labels[i])),
               ),
         floatingActionButton: !student && index == 2 && staff
             ? FloatingActionButton.extended(
@@ -1540,10 +1568,11 @@ class _HomeShellState extends State<HomeShell> {
     final resolved = all.where((i) => i.status == IssueStatus.resolved).length;
     final myStaffTasks = all
         .where((issue) =>
-            issue.assignedTo == FirebaseAuth.instance.currentUser?.uid ||
-            (issue.status == IssueStatus.verificationRequested &&
-                issue.verificationAssignedTo ==
-                    FirebaseAuth.instance.currentUser?.uid))
+            issue.isOpen &&
+            (issue.assignedTo == FirebaseAuth.instance.currentUser?.uid ||
+                (issue.status == IssueStatus.verificationRequested &&
+                    issue.verificationAssignedTo ==
+                        FirebaseAuth.instance.currentUser?.uid)))
         .toList(growable: false);
     final review = all
         .where((i) =>
@@ -1642,9 +1671,17 @@ class _HomeShellState extends State<HomeShell> {
           subtitle:
               'Inspection requests and repair assignments from Admin will appear in Tasks.',
         ),
-      ...(staff ? myStaffTasks : all)
-          .take(3)
-          .map((i) => IssueTile(issue: i, onTap: () => _openIssue(i))),
+      ...(staff ? myStaffTasks : all).take(3).map((i) => IssueTile(
+            issue: i,
+            onTap: () => _openIssue(i),
+            actionHint: staff
+                ? i.status == IssueStatus.verificationRequested
+                    ? 'Open to record the inspection result'
+                    : i.status == IssueStatus.inProgress
+                        ? 'Open to post repair steps or submit completion'
+                        : 'Open to start the assigned repair'
+                : null,
+          )),
       const SizedBox(height: 18),
       if (!student) _sectionTitle(staff ? 'Staff actions' : 'Quick actions'),
       if (staff)
@@ -1756,7 +1793,9 @@ class _HomeShellState extends State<HomeShell> {
     final tasks = staff
         ? all
             .where((issue) =>
-                issue.assignedTo == uid || issue.verificationAssignedTo == uid)
+                issue.isOpen &&
+                (issue.assignedTo == uid ||
+                    issue.verificationAssignedTo == uid))
             .toList()
         : all
             .where((issue) =>
@@ -1820,9 +1859,12 @@ class _HomeShellState extends State<HomeShell> {
     final uid = FirebaseAuth.instance.currentUser!.uid;
     return IssueUpdatesPage(
       issues: all,
+      notificationUid: uid,
       notifications: repository.watchNotifications(uid),
       watchWorkUpdates: repository.watchWorkUpdates,
       markNotificationRead: repository.markNotificationRead,
+      approveDeletionRequest: repository.deleteIssue,
+      declineDeletionRequest: repository.dismissIssueDeletionRequest,
       onOpenIssue: _openIssue,
       onMessage: _showMessage,
     );
@@ -2034,17 +2076,23 @@ class IssueUpdatesPage extends StatelessWidget {
   const IssueUpdatesPage({
     super.key,
     required this.issues,
+    required this.notificationUid,
     required this.notifications,
     required this.watchWorkUpdates,
     required this.markNotificationRead,
+    required this.approveDeletionRequest,
+    required this.declineDeletionRequest,
     required this.onOpenIssue,
     required this.onMessage,
   });
 
   final List<CampusIssue> issues;
+  final String notificationUid;
   final Stream<List<Map<String, dynamic>>> notifications;
   final Stream<List<WorkUpdate>> Function(String) watchWorkUpdates;
   final Future<void> Function(String, String) markNotificationRead;
+  final Future<void> Function(String) approveDeletionRequest;
+  final Future<void> Function(String) declineDeletionRequest;
   final ValueChanged<CampusIssue> onOpenIssue;
   final ValueChanged<String> onMessage;
 
@@ -2103,9 +2151,55 @@ class IssueUpdatesPage extends StatelessWidget {
                     onTap: () async {
                       try {
                         await markNotificationRead(
-                          FirebaseAuth.instance.currentUser!.uid,
+                          notificationUid,
                           notification['id'] as String,
                         );
+                        if (!context.mounted) return;
+                        final isDeletionRequest =
+                            notification['type'] == 'issue_deletion_request' ||
+                                notification['title'] ==
+                                    'Issue deletion approval requested';
+                        if (isDeletionRequest && issueId != null) {
+                          final approved = await showDialog<bool>(
+                            context: context,
+                            builder: (dialogContext) => AlertDialog(
+                              icon: const Icon(
+                                Icons.delete_outline,
+                                color: Colors.redAccent,
+                              ),
+                              title: const Text('Approve issue deletion?'),
+                              content: Text(
+                                'Admin is asking permission to permanently delete '
+                                '${issue?.title ?? 'this resolved issue'}. '
+                                'Approving removes its issue record and activity '
+                                'from CampusPlus. This cannot be undone.',
+                              ),
+                              actions: [
+                                TextButton(
+                                  onPressed: () =>
+                                      Navigator.pop(dialogContext, false),
+                                  child: const Text('Decline'),
+                                ),
+                                FilledButton(
+                                  style: FilledButton.styleFrom(
+                                    backgroundColor: Colors.redAccent,
+                                  ),
+                                  onPressed: () =>
+                                      Navigator.pop(dialogContext, true),
+                                  child: const Text('Approve deletion'),
+                                ),
+                              ],
+                            ),
+                          );
+                          if (approved == true) {
+                            await approveDeletionRequest(issueId);
+                            onMessage('Issue and related activity deleted.');
+                          } else if (approved == false) {
+                            await declineDeletionRequest(issueId);
+                            onMessage('Deletion request declined.');
+                          }
+                          return;
+                        }
                         if (issue != null) onOpenIssue(issue);
                       } catch (error) {
                         onMessage('Could not open notification: $error');
@@ -3879,6 +3973,7 @@ class _IssueDetailPageState extends State<IssueDetailPage> {
   bool _followLoading = false;
   bool _hasConfirmedAffected = false;
   bool _verificationRecorded = false;
+  bool _verificationSubmitting = false;
 
   @override
   void initState() {
@@ -4185,50 +4280,69 @@ class _IssueDetailPageState extends State<IssueDetailPage> {
                           children: ['Yes, fixed', 'Still exists', 'Not sure']
                               .map(
                                 (vote) => OutlinedButton(
-                                  onPressed: () async {
-                                    try {
-                                      final recorded = await widget.onVerify(
-                                        issue.id,
-                                        vote,
-                                      );
-                                      if (!recorded) {
-                                        widget.onMessage(
-                                          'You have already verified this issue, or you had not confirmed being affected.',
-                                        );
-                                        if (mounted) {
-                                          setState(() =>
-                                              _verificationRecorded = true);
-                                        }
-                                        return;
-                                      }
-                                      setState(() {
-                                        _verificationRecorded = true;
-                                        issue.verificationVotes[FirebaseAuth
-                                            .instance.currentUser!.uid] = vote;
-                                        issue.verificationCount++;
-                                        if (vote == 'Still exists') {
-                                          issue.stillExistsVotes++;
-                                        }
-                                        issue.history = [
-                                          ...issue.history,
-                                          'Student verification: $vote',
-                                        ];
-                                        if (issue.hasMajorityStillExistsVotes) {
-                                          issue.status = IssueStatus.inProgress;
-                                          issue.history = [
-                                            ...issue.history,
-                                            'Reopened after student verification',
-                                          ];
-                                        }
-                                      });
-                                      widget.onMessage(
-                                          'Your verification was saved.');
-                                    } catch (error) {
-                                      widget.onMessage(
-                                        'Could not save verification: $error',
-                                      );
-                                    }
-                                  },
+                                  onPressed: _verificationSubmitting
+                                      ? null
+                                      : () async {
+                                          setState(
+                                            () =>
+                                                _verificationSubmitting = true,
+                                          );
+                                          try {
+                                            final recorded =
+                                                await widget.onVerify(
+                                              issue.id,
+                                              vote,
+                                            );
+                                            if (!recorded) {
+                                              widget.onMessage(
+                                                'You have already verified this issue, or you had not confirmed being affected.',
+                                              );
+                                              if (mounted) {
+                                                setState(() {
+                                                  _verificationRecorded = true;
+                                                  _verificationSubmitting =
+                                                      false;
+                                                });
+                                              }
+                                              return;
+                                            }
+                                            if (!mounted) return;
+                                            setState(() {
+                                              _verificationRecorded = true;
+                                              issue.verificationCount++;
+                                              if (vote == 'Still exists') {
+                                                issue.stillExistsVotes++;
+                                              }
+                                              issue.history = [
+                                                ...issue.history,
+                                                'Student verification: $vote',
+                                              ];
+                                              if (issue
+                                                  .hasMajorityStillExistsVotes) {
+                                                issue.status =
+                                                    IssueStatus.inProgress;
+                                                issue.history = [
+                                                  ...issue.history,
+                                                  'Reopened after student verification',
+                                                ];
+                                              }
+                                            });
+                                            widget.onMessage(
+                                                'Your verification was saved.');
+                                          } catch (error) {
+                                            widget.onMessage(
+                                              'Could not save verification: $error',
+                                            );
+                                          } finally {
+                                            if (mounted &&
+                                                _verificationSubmitting) {
+                                              setState(
+                                                () => _verificationSubmitting =
+                                                    false,
+                                              );
+                                            }
+                                          }
+                                        },
                                   child: Text(vote),
                                 ),
                               )
@@ -5006,10 +5120,43 @@ class AnalyticsPage extends StatelessWidget {
                       fontSize: 22, fontWeight: FontWeight.w800))));
 }
 
+class UnreadNotificationIcon extends StatelessWidget {
+  const UnreadNotificationIcon({
+    super.key,
+    required this.count,
+    required this.icon,
+  });
+
+  final Stream<int> count;
+  final IconData icon;
+
+  @override
+  Widget build(BuildContext context) => StreamBuilder<int>(
+        stream: count,
+        initialData: 0,
+        builder: (context, snapshot) {
+          final unread = snapshot.data ?? 0;
+          return Badge(
+            isLabelVisible: unread > 0,
+            backgroundColor: Colors.red,
+            label: Text(unread > 99 ? '99+' : '$unread'),
+            child: Icon(icon),
+          );
+        },
+      );
+}
+
 class IssueTile extends StatelessWidget {
-  const IssueTile({super.key, required this.issue, required this.onTap});
+  const IssueTile({
+    super.key,
+    required this.issue,
+    required this.onTap,
+    this.actionHint,
+  });
   final CampusIssue issue;
   final VoidCallback onTap;
+  final String? actionHint;
+
   @override
   Widget build(BuildContext context) => Card(
         margin: const EdgeInsets.only(bottom: 10),
@@ -5045,19 +5192,31 @@ class IssueTile extends StatelessWidget {
                           child: Column(
                               crossAxisAlignment: CrossAxisAlignment.start,
                               children: [
-                            Row(
-                                crossAxisAlignment: CrossAxisAlignment.start,
-                                children: [
-                                  Expanded(
-                                      child: Text(issue.title,
-                                          style: const TextStyle(
-                                              fontWeight: FontWeight.w800,
-                                              fontSize: 15))),
-                                  const SizedBox(width: 6),
-                                  _StatusPill(issue.status)
-                                ]),
+                            Wrap(
+                              spacing: 8,
+                              runSpacing: 6,
+                              crossAxisAlignment: WrapCrossAlignment.center,
+                              children: [
+                                ConstrainedBox(
+                                  constraints:
+                                      const BoxConstraints(maxWidth: 240),
+                                  child: Text(
+                                    issue.title,
+                                    maxLines: 2,
+                                    overflow: TextOverflow.ellipsis,
+                                    style: const TextStyle(
+                                      fontWeight: FontWeight.w800,
+                                      fontSize: 15,
+                                    ),
+                                  ),
+                                ),
+                                _StatusPill(issue.status),
+                              ],
+                            ),
                             const SizedBox(height: 5),
                             Text(issue.location,
+                                maxLines: 2,
+                                overflow: TextOverflow.ellipsis,
                                 style: const TextStyle(
                                     color: muted, fontSize: 12)),
                             if (issue.assignedTo.isNotEmpty) ...[
@@ -5085,24 +5244,56 @@ class IssueTile extends StatelessWidget {
                                 ],
                               ),
                             ],
+                            if (actionHint != null) ...[
+                              const SizedBox(height: 6),
+                              Text(
+                                actionHint!,
+                                maxLines: 2,
+                                overflow: TextOverflow.ellipsis,
+                                style: const TextStyle(
+                                  color: brand,
+                                  fontSize: 11,
+                                  fontWeight: FontWeight.w600,
+                                ),
+                              ),
+                            ],
                             const SizedBox(height: 8),
-                            Row(children: [
-                              const Icon(Icons.people_outline,
-                                  size: 15, color: muted),
-                              const SizedBox(width: 4),
-                              Text('${issue.affectedCount} affected',
-                                  style: const TextStyle(
-                                      color: muted, fontSize: 12)),
-                              const Spacer(),
-                              Text('${issue.priority} priority',
+                            Wrap(
+                              spacing: 12,
+                              runSpacing: 4,
+                              crossAxisAlignment: WrapCrossAlignment.center,
+                              children: [
+                                Row(
+                                  mainAxisSize: MainAxisSize.min,
+                                  children: [
+                                    const Icon(
+                                      Icons.people_outline,
+                                      size: 15,
+                                      color: muted,
+                                    ),
+                                    const SizedBox(width: 4),
+                                    Text(
+                                      '${issue.affectedCount} affected',
+                                      style: const TextStyle(
+                                        color: muted,
+                                        fontSize: 12,
+                                      ),
+                                    ),
+                                  ],
+                                ),
+                                Text(
+                                  '${issue.priority} priority',
                                   style: TextStyle(
-                                      color: issue.priority == 'Urgent' ||
-                                              issue.priority == 'High'
-                                          ? Colors.redAccent
-                                          : muted,
-                                      fontWeight: FontWeight.w700,
-                                      fontSize: 12))
-                            ]),
+                                    color: issue.priority == 'Urgent' ||
+                                            issue.priority == 'High'
+                                        ? Colors.redAccent
+                                        : muted,
+                                    fontWeight: FontWeight.w700,
+                                    fontSize: 12,
+                                  ),
+                                ),
+                              ],
+                            ),
                           ])),
                     ]))),
       );

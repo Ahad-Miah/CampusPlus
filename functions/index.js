@@ -33,6 +33,20 @@ exports.notifyIssueUpdates = onDocumentWritten(
         !inspectionAssignmentChanged && !deletionApprovalRequested) return;
 
     const issueId = event.params.issueId;
+    const dispatchRef = db.collection("issues")
+      .doc(issueId)
+      .collection("notificationEvents")
+      .doc(event.id);
+    const claimed = await db.runTransaction(async (transaction) => {
+      const dispatch = await transaction.get(dispatchRef);
+      if (dispatch.exists) return false;
+      transaction.create(dispatchRef, {
+        createdAt: FieldValue.serverTimestamp(),
+      });
+      return true;
+    });
+    if (!claimed) return;
+
     const title = deletionApprovalRequested
       ? "Issue deletion approval requested"
       : created
@@ -124,13 +138,18 @@ exports.notifyIssueUpdates = onDocumentWritten(
       notification: { title, body },
       data: {
         issueId,
+        notificationType: deletionApprovalRequested
+          ? "issue_deletion_request"
+          : "issue_update",
         title,
         body,
       },
       android: {
         priority: "high",
+        collapseKey: issueId,
         notification: {
           channelId: "campusplus_updates",
+          tag: issueId,
         },
       },
     });

@@ -27,6 +27,7 @@ Firebase Android settings are configured for project `campusplus-210d8` and pack
 - Responsive Updates activity feed with staff notes, completed/remaining steps, photos, and complete issue timelines
 - Student My Issues page to track, edit photos/details on unassigned reports, or delete owned reports
 - Admin Manage All Issues page with search/status filters and reporter-approved deletion of resolved issues
+- Live unread notification counts and deletion-approval alerts that open approve/decline actions without entering the issue workflow
 - Report form with category, building/floor/room, severity and anonymous toggle
 - Optional issue/profile photo uploads to Cloudinary; secure image URLs are saved in Firestore
 - Similar open issue check, one-time affected votes, and persistent issue following
@@ -34,7 +35,7 @@ Firebase Android settings are configured for project `campusplus-210d8` and pack
 - Staff-confirmed inspections before Admin repair assignment; Staff can document work, attach progress/completion photos, and explicitly submit a resolution summary
 - Android launcher icon uses the supplied CampusPlus graduation illustration
 - Only affected students can verify resolutions; reopening requires a strict majority of affected students
-- Issue notifications, push alerts, and notification history (after Cloud Function deployment)
+- Issue notifications, push alerts, and notification history (after Cloud Function deployment); duplicate issue events are suppressed
 - Profile editing, account settings, support requests, student suggestions and Admin review tools
 - Analytics by category/building, recurrence, resolution time and expected-date SLA
 - Anonymous reporter IDs stored in restricted documents, with Admin migration for legacy reports
@@ -44,7 +45,7 @@ Sign in with email and password; CampusPlus loads the account role from Firestor
 
 The first app launch shows a branded splash screen followed by three short onboarding screens; users can swipe, skip, or tap **Get Started**. Onboarding is remembered on the device and will not interrupt later launches.
 
-Issue workflow: Admin assigns a Staff member to inspect a new report. That Staff member confirms or rejects the inspection with a note. Only a confirmed issue can then be assigned by Admin for repair. The assigned Staff member posts progress updates with completed and remaining steps; all signed-in users can follow activity in Updates and open the issue details for its full timeline. Students manage their submissions in My Issues. Admins can request deletion of a resolved report, but the reporter must approve; approval deletes it automatically.
+Issue workflow: Admin assigns a Staff member to inspect a new report. That Staff member confirms or rejects the inspection with a note. Only a confirmed issue can then be assigned by Admin for repair. The assigned Staff member posts progress updates with completed and remaining steps; all signed-in users can follow activity in Updates and open the issue details for its full timeline. Students manage their submissions in My Issues. Admins can request deletion of a resolved report, but the reporter must approve; approval deletes the issue, its progress records, linked notifications, and user-facing issue indexes automatically. Cloudinary-hosted image files are not removed by Firestore cleanup.
 
 For security, the app does not hard-code a shared `admin@gmail.com` account or password. Create the desired email/password account through Firebase Authentication (using a real mailbox you control), then promote its Firestore profile to `admin` as described in the setup guide.
 

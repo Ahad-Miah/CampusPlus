@@ -220,6 +220,126 @@ void main() {
     expect(opened, isTrue);
   });
 
+  testWidgets('Issue cards fit on a narrow phone and show the next action', (
+    WidgetTester tester,
+  ) async {
+    await tester.binding.setSurfaceSize(const Size(320, 720));
+    addTearDown(() => tester.binding.setSurfaceSize(null));
+    final issue = CampusIssue(
+      id: 'CP-NARROW',
+      title: 'Long issue title that needs to wrap on a small phone',
+      description: 'The light is not working.',
+      category: 'Electrical',
+      location: 'Engineering building · 2nd floor · East hallway',
+      reporter: 'Student',
+      status: IssueStatus.inProgress,
+      assignedTo: 'staff-uid',
+      assignedToName: 'Rafi Hasan',
+    );
+
+    await tester.pumpWidget(
+      MaterialApp(
+        home: Scaffold(
+          body: IssueTile(
+            issue: issue,
+            actionHint: 'Open to post repair steps or submit completion',
+            onTap: () {},
+          ),
+        ),
+      ),
+    );
+
+    expect(find.text('In Progress'), findsOneWidget);
+    expect(
+      find.text('Open to post repair steps or submit completion'),
+      findsOneWidget,
+    );
+    expect(tester.takeException(), isNull);
+  });
+
+  testWidgets('Unread notifications show a red count badge', (
+    WidgetTester tester,
+  ) async {
+    await tester.pumpWidget(
+      MaterialApp(
+        home: Scaffold(
+          body: UnreadNotificationIcon(
+            count: Stream<int>.value(4),
+            icon: Icons.notifications_none_rounded,
+          ),
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    final badge = tester.widget<Badge>(find.byType(Badge));
+    expect(badge.backgroundColor, Colors.red);
+    expect(find.text('4'), findsOneWidget);
+  });
+
+  testWidgets('Yes, fixed submits a single resolution verification vote', (
+    WidgetTester tester,
+  ) async {
+    final issue = CampusIssue(
+      id: 'CP-VERIFICATION',
+      title: 'Repaired hallway light',
+      description: 'The east hallway light was repaired.',
+      category: 'Electrical',
+      location: 'Engineering · 2 · East hallway',
+      reporter: 'Student',
+      status: IssueStatus.resolved,
+      affectedCount: 1,
+    );
+    String? submittedVote;
+
+    await tester.pumpWidget(
+      MaterialApp(
+        home: IssueDetailPage(
+          issue: issue,
+          role: 'Student',
+          onChanged: (_) async {},
+          onMarkAffected: (_) async => false,
+          onVerify: (issueId, vote) async {
+            expect(issueId, 'CP-VERIFICATION');
+            submittedVote = vote;
+            return true;
+          },
+          onToggleFollow: (_) async => false,
+          checkFollowing: (_) async => false,
+          checkAffected: (_) async => true,
+          checkVerification: (_) async => false,
+          loadStaffUsers: () async => [],
+          watchWorkUpdates: (_) => Stream.value(const []),
+          addWorkUpdate: ({
+            required issueId,
+            required note,
+            required completedSteps,
+            required nextSteps,
+            photoUrl,
+          }) async {},
+          uploadPhoto: ({
+            required bytes,
+            required fileName,
+            required contentType,
+          }) async =>
+              '',
+          onMessage: (_) {},
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+    await tester.ensureVisible(find.text('Yes, fixed'));
+    await tester.tap(find.text('Yes, fixed'));
+    await tester.pumpAndSettle();
+
+    expect(submittedVote, 'Yes, fixed');
+    expect(
+      find.text('Your verification has already been recorded.'),
+      findsOneWidget,
+    );
+    expect(tester.takeException(), isNull);
+  });
+
   testWidgets('Inspection note dialog submits the note and disposes cleanly', (
     WidgetTester tester,
   ) async {
@@ -383,6 +503,7 @@ void main() {
         home: Scaffold(
           body: IssueUpdatesPage(
             issues: [issue],
+            notificationUid: 'student-uid',
             notifications: Stream.value(const []),
             watchWorkUpdates: (_) => Stream.value([
               WorkUpdate(
@@ -395,6 +516,8 @@ void main() {
               ),
             ]),
             markNotificationRead: (_, __) async {},
+            approveDeletionRequest: (_) async {},
+            declineDeletionRequest: (_) async {},
             onOpenIssue: (_) => openedIssue = true,
             onMessage: (_) {},
           ),
@@ -414,6 +537,56 @@ void main() {
     expect(find.textContaining('Test the circuit'), findsOneWidget);
     await tester.tap(find.text('Tap to view the complete timeline  ›'));
     expect(openedIssue, isTrue);
+    expect(tester.takeException(), isNull);
+  });
+
+  testWidgets('Deletion request notification only opens approval actions', (
+    WidgetTester tester,
+  ) async {
+    var approvedIssueId = '';
+    var openedIssue = false;
+    var markedRead = false;
+    final notifications = Stream<List<Map<String, dynamic>>>.value([
+      {
+        'id': 'notice-1',
+        'issueId': 'CP-DELETE',
+        'type': 'issue_deletion_request',
+        'title': 'Issue deletion approval requested',
+        'body': 'Admin requested permission to delete the resolved issue.',
+        'read': false,
+        'createdAt': Timestamp.fromDate(DateTime(2026, 10, 25)),
+      },
+    ]);
+
+    await tester.pumpWidget(
+      MaterialApp(
+        home: Scaffold(
+          body: IssueUpdatesPage(
+            issues: const [],
+            notificationUid: 'reporter-uid',
+            notifications: notifications,
+            watchWorkUpdates: (_) => Stream.value(const []),
+            markNotificationRead: (_, __) async => markedRead = true,
+            approveDeletionRequest: (id) async => approvedIssueId = id,
+            declineDeletionRequest: (_) async {},
+            onOpenIssue: (_) => openedIssue = true,
+            onMessage: (_) {},
+          ),
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Issue deletion approval requested'));
+    await tester.pumpAndSettle();
+
+    expect(find.text('Approve issue deletion?'), findsOneWidget);
+    expect(find.text('Approve deletion'), findsOneWidget);
+    await tester.tap(find.text('Approve deletion'));
+    await tester.pumpAndSettle();
+
+    expect(markedRead, isTrue);
+    expect(approvedIssueId, 'CP-DELETE');
+    expect(openedIssue, isFalse);
     expect(tester.takeException(), isNull);
   });
 

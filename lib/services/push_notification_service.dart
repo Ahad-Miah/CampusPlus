@@ -27,18 +27,23 @@ class PushNotificationService {
   final FlutterLocalNotificationsPlugin _localNotifications =
       FlutterLocalNotificationsPlugin();
   final List<StreamSubscription<dynamic>> _subscriptions = [];
-  Future<void> Function(String? issueId)? _onOpen;
+  Future<void> Function(String? issueId, String? notificationType)? _onOpen;
   String? _pendingIssueId;
+  String? _pendingNotificationType;
   bool _hasPendingOpen = false;
 
-  set onOpen(Future<void> Function(String? issueId)? callback) {
+  set onOpen(
+    Future<void> Function(String? issueId, String? notificationType)? callback,
+  ) {
     _onOpen = callback;
     if (callback != null && _hasPendingOpen) {
       _hasPendingOpen = false;
-      unawaited(callback(_pendingIssueId));
+      unawaited(callback(_pendingIssueId, _pendingNotificationType));
       _pendingIssueId = null;
+      _pendingNotificationType = null;
     }
   }
+
   String? _currentToken;
   bool _initialized = false;
 
@@ -52,11 +57,15 @@ class PushNotificationService {
     await _localNotifications.initialize(
       settings: settings,
       onDidReceiveNotificationResponse: (response) {
-        _dispatchOpen(response.payload);
+        final payload = response.payload?.split('|') ?? const <String>[];
+        _dispatchOpen(
+          payload.isEmpty ? null : payload.first,
+          payload.length < 2 ? null : payload[1],
+        );
       },
     );
-    final androidNotifications = _localNotifications
-        .resolvePlatformSpecificImplementation<
+    final androidNotifications =
+        _localNotifications.resolvePlatformSpecificImplementation<
             AndroidFlutterLocalNotificationsPlugin>();
     await androidNotifications?.createNotificationChannel(_channel);
 
@@ -69,7 +78,10 @@ class PushNotificationService {
           debugPrint('Foreground push stream failed: $error'),
     ));
     _subscriptions.add(FirebaseMessaging.onMessageOpenedApp.listen(
-      (message) => _dispatchOpen(message.data['issueId'] as String?),
+      (message) => _dispatchOpen(
+        message.data['issueId'] as String?,
+        message.data['notificationType'] as String?,
+      ),
       onError: (Object error) =>
           debugPrint('Push navigation stream failed: $error'),
     ));
@@ -96,18 +108,22 @@ class PushNotificationService {
     ));
     final initialMessage = await _messaging.getInitialMessage();
     if (initialMessage != null) {
-      _dispatchOpen(initialMessage.data['issueId'] as String?);
+      _dispatchOpen(
+        initialMessage.data['issueId'] as String?,
+        initialMessage.data['notificationType'] as String?,
+      );
     }
   }
 
-  void _dispatchOpen(String? issueId) {
+  void _dispatchOpen(String? issueId, String? notificationType) {
     final callback = _onOpen;
     if (callback == null) {
       _pendingIssueId = issueId;
+      _pendingNotificationType = notificationType;
       _hasPendingOpen = true;
       return;
     }
-    unawaited(callback(issueId));
+    unawaited(callback(issueId, notificationType));
   }
 
   Future<void> setEnabled(bool enabled) async {
@@ -157,7 +173,8 @@ class PushNotificationService {
     if (profile.data()?['pushEnabled'] != true) return false;
 
     final settings = requestPermission
-        ? await _messaging.requestPermission(alert: true, badge: true, sound: true)
+        ? await _messaging.requestPermission(
+            alert: true, badge: true, sound: true)
         : await _messaging.getNotificationSettings();
     if (settings.authorizationStatus != AuthorizationStatus.authorized &&
         settings.authorizationStatus != AuthorizationStatus.provisional) {
@@ -193,7 +210,8 @@ class PushNotificationService {
   }
 
   Future<void> _showForegroundMessage(RemoteMessage message) async {
-    final title = message.notification?.title ?? message.data['title'] as String?;
+    final title =
+        message.notification?.title ?? message.data['title'] as String?;
     final body = message.notification?.body ?? message.data['body'] as String?;
     if (title == null && body == null) return;
     await _localNotifications.show(
@@ -210,7 +228,8 @@ class PushNotificationService {
           icon: '@mipmap/ic_launcher',
         ),
       ),
-      payload: message.data['issueId'] as String?,
+      payload:
+          '${message.data['issueId'] as String? ?? ''}|${message.data['notificationType'] as String? ?? ''}',
     );
   }
 
